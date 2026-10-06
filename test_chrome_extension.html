@@ -1,0 +1,173 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>104 Chrome Extension parser test</title>
+<iframe id="sample" src="jd_sample_1.html" sandbox="allow-same-origin" hidden></iframe>
+<iframe id="list_sample" src="list_sample_1.html" sandbox="allow-same-origin" hidden></iframe>
+<pre id="result">RUNNING</pre>
+<script src="chrome-extension/parser.js"></script>
+<script src="chrome-extension/markdown.js"></script>
+<script>
+  const resultNode = document.getElementById("result");
+  const failures = [];
+
+  function assert(condition, message) {
+    if (!condition) failures.push(message);
+  }
+
+  function equal(actual, expected, message) {
+    assert(actual === expected, `${message}: expected ${expected}, got ${actual}`);
+  }
+
+  function fallbackDocument() {
+    return new DOMParser().parseFromString(`
+      <main>
+        <h1>Fallback 職缺 / 測試</h1>
+        <a href="/company/fallback">Fallback 公司</a>
+        <div class="job-description">
+          <div class="list-row">
+            <div class="list-row__head">工作待遇</div>
+            <div class="list-row__data">4 萬元</div>
+          </div>
+          <div class="list-row">
+            <div class="list-row__head">上班地點</div>
+            <div class="list-row__data">台北市<br>測試區</div>
+          </div>
+          <div class="job-description__content">第一行<br>第二行</div>
+        </div>
+        <div class="job-requirement">
+          <div class="list-row">
+            <div class="list-row__head">工作經歷</div>
+            <div class="list-row__data">1年以上</div>
+          </div>
+        </div>
+        <div class="benefits">
+          <div><h3>法定項目</h3></div>
+          <div class="benefits-labels"><span class="tag">勞保</span></div>
+          <div><h3>其他福利</h3></div>
+          <div class="benefits-labels"><span class="tag">彈性工時</span></div>
+          <div class="benefits-description">提供測試福利</div>
+        </div>
+        <div class="job-contact-table">
+          <div class="job-contact-table__head">聯絡人</div>
+          <div class="job-contact-table__data">測試人資</div>
+        </div>
+      </main>
+    `, "text/html");
+  }
+
+  function run() {
+    try {
+      const sample = __parse104Job(
+        document.getElementById("sample").contentDocument,
+        "https://www.104.com.tw/job/7wbn5?jobsource=test",
+      );
+      equal(sample.title, "RD21113 前端工程師 Frontend Developers (Medical AI)", "sample title");
+      equal(sample.job_id, "7wbn5", "sample job id");
+      equal(sample.company, "華碩電腦股份有限公司", "sample company");
+      equal(sample.location, "台北市北投區", "sample location");
+      assert(sample.salary.includes("4 萬元"), "sample salary");
+      assert(sample.benefits.其他福利.includes("可遠端/在家上班"), "sample benefit tag");
+      equal(sample.benefits.應徵網址, "https://recruit.asus.com/", "sample application URL");
+
+      const markdown = render104Markdown(sample);
+      assert(markdown.includes("- 公司名稱: 華碩電腦股份有限公司"), "sample markdown company");
+      assert(markdown.includes("- 來源網址: https://www.104.com.tw/job/7wbn5"), "sample source URL");
+      assert(!markdown.includes("原始檔案"), "extension markdown must omit source file");
+      assert(!markdown.includes("\n|"), "markdown must not contain a table");
+      assert(!markdown.includes("dataLayer"), "markdown must omit tracking data");
+      assert(!markdown.includes("@gmail.com"), "markdown must omit account email");
+      assert(!markdown.includes("推薦職缺"), "markdown must omit recommendations");
+
+      const fallback = __parse104Job(
+        fallbackDocument(),
+        "https://www.104.com.tw/job/fallback-id?tracking=yes",
+      );
+      equal(fallback.title, "Fallback 職缺 / 測試", "fallback title");
+      equal(fallback.job_id, "fallback-id", "fallback job id");
+      equal(fallback.company, "Fallback 公司", "fallback company");
+      equal(fallback.location, "台北市\n測試區", "fallback br handling");
+      equal(fallback.salary, "4 萬元", "fallback DOM salary");
+      assert(fallback.description.includes("第一行\n第二行"), "fallback description");
+      assert(fallback.benefits.法定項目.includes("勞保"), "fallback benefit section");
+      equal(fallback.contact, "測試人資", "fallback contact");
+      equal(fallback.source_url, "https://www.104.com.tw/job/fallback-id", "fallback canonical URL");
+      assert(render104Markdown({ description: "", benefits: {} }).includes("未提供"), "missing value");
+      equal(
+        get104DownloadFilename({ job_id: "x/1", company: "測試公司", title: "A:B? C" }),
+        "104/x_1-測試公司-A_B_ C.md",
+        "safe download filename with company",
+      );
+      equal(
+        get104DownloadFilename({ job_id: "x/1", title: "A:B? C" }),
+        "104/x_1-公司-A_B_ C.md",
+        "safe download filename fallback company",
+      );
+
+      const listDoc = document.getElementById("list_sample").contentDocument;
+      const listResult = __parse104JobList(
+        listDoc,
+        "https://www.104.com.tw/jobs/search/?keyword=%E5%84%AA%E6%B8%A5%E7%A7%91%E6%8A%80&mode=s&page=1&order=15",
+      );
+      equal(listResult.type, "search", "list result type");
+      equal(listResult.keyword, "優渥科技", "list keyword");
+      equal(listResult.page, "1", "list page");
+      assert(listResult.jobs.length === 3, `list jobs count: expected 3, got ${listResult.jobs.length}`);
+
+      const firstJob = listResult.jobs[0];
+      equal(firstJob.job_id, "88of0", "first job id");
+      equal(firstJob.title, "【正職】物理治療師", "first job title");
+      equal(firstJob.company, "惠森復健科診所", "first job company");
+      equal(firstJob.company_url, "https://www.104.com.tw/company/1a2x6bkhsp", "first job company url");
+      equal(firstJob.industry, "診所", "first job industry");
+      equal(firstJob.location, "台北市中正區", "first job location");
+      equal(firstJob.salary, "月薪60,000~120,000元", "first job salary");
+      equal(firstJob.experience, "經歷不拘", "first job experience");
+      equal(firstJob.education, "專科", "first job education");
+      assert(firstJob.description.includes("惠森復健科診所"), "first job description");
+      assert(firstJob.applicants.includes("6~10 人應徵"), "first job applicants");
+
+      const listMd = render104ListMarkdown(listResult);
+      assert(listMd.includes("# 104 職缺搜尋結果 - 優渥科技 (第 1 頁)"), "list markdown title");
+      assert(listMd.includes("- 搜尋關鍵字: 優渥科技"), "list markdown keyword");
+      assert(listMd.includes("### 1. 【正職】物理治療師"), "list markdown job 1 header");
+      assert(listMd.includes("- 公司名稱: 惠森復健科診所"), "list markdown job 1 company");
+      assert(listMd.includes("- 薪資待遇: 月薪60,000~120,000元"), "list markdown job 1 salary");
+
+      equal(
+        get104ListDownloadFilename(listResult),
+        "104/search-優渥科技-p1.md",
+        "list download filename",
+      );
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+
+    resultNode.textContent = failures.length
+      ? `FAIL\n${failures.map((failure) => `- ${failure}`).join("\n")}`
+      : "PASS";
+    document.body.dataset.testStatus = failures.length ? "fail" : "pass";
+  }
+
+  const sampleFrame = document.getElementById("sample");
+  const listFrame = document.getElementById("list_sample");
+
+  let loadedCount = 0;
+  function checkReady() {
+    loadedCount++;
+    if (loadedCount >= 2) {
+      run();
+    }
+  }
+
+  if (sampleFrame.contentDocument?.readyState === "complete") {
+    checkReady();
+  } else {
+    sampleFrame.addEventListener("load", checkReady, { once: true });
+  }
+
+  if (listFrame.contentDocument?.readyState === "complete") {
+    checkReady();
+  } else {
+    listFrame.addEventListener("load", checkReady, { once: true });
+  }
+</script>

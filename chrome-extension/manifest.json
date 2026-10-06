@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "104 職缺匯出 Markdown",
+  "version": "1.0.0",
+  "description": "將目前開啟的 104 職缺頁面或搜尋列表匯出為 Markdown 檔案。",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "downloads"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "匯出 104 職缺 Markdown"
+  }
+}
